@@ -22,6 +22,7 @@ export default defineConfig({
       "/auth": "http://localhost:8080",
       "/users": "http://localhost:8080",
       "/chats": "http://localhost:8080",
+      "/friends": "http://localhost:8080",
       "/ws": {
         target: "http://localhost:8080",
         ws: true,
