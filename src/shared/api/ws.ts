@@ -1,5 +1,6 @@
 import SockJS from "sockjs-client";
-import { Client } from "@stomp/stompjs";
+import { Client, IMessage } from "@stomp/stompjs";
+import { getAuthToken } from "@/shared/lib/authStorage";
 
 let stompClient: Client | null = null;
 
@@ -10,7 +11,7 @@ export const switchChat = async (chatId: number, onEvent: (event: any) => void) 
         stompClient = null;
     }
 
-    const socket = new SockJS("http://localhost:8080/ws");
+    const socket = new SockJS("/ws");
     stompClient = new Client({
         webSocketFactory: () => socket as any,
         reconnectDelay: 5000,
@@ -43,3 +44,16 @@ export const disconnectWebSocket = async () => {
         stompClient = null;
     }
 };
+
+export function createStompClient(onConnect: (c: Client) => void): Client {
+    const client = new Client({
+        webSocketFactory: () => new SockJS("/ws"),
+        connectHeaders: { Authorization: `Bearer ${getAuthToken() ?? ""}` },
+        reconnectDelay: 4000,
+        onConnect: () => onConnect(client),
+    });
+    client.activate();
+    return client;
+}
+
+export type { IMessage };

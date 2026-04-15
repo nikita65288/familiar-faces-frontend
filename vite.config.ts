@@ -18,15 +18,14 @@ export default defineConfig({
   },
 
   server: {
+    port: 5173,
     proxy: {
-      "/auth": "http://localhost:8080",
-      "/users": "http://localhost:8080",
-      "/chats": "http://localhost:8080",
-      "/friends": "http://localhost:8080",
-      "/ws": {
+      "/api": {
         target: "http://localhost:8080",
-        ws: true,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api/, ""),
       },
+      "/ws": { target: "http://localhost:8080", ws: true, changeOrigin: true },
     },
   },
 });

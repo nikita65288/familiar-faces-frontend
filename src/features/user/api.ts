@@ -1,52 +1,30 @@
-import axios from "axios";
-import { API_URL } from "@/shared/config";
-import { getUserIdFromToken } from "@/shared/lib/jwt";
+import { api } from "@/shared/api/client";
 
 export type UserProfileDto = {
+    id?: number;
     authId?: number;
     username?: string;
-    name?: string;
+    email?: string;
     firstName?: string;
     lastName?: string;
+    bio?: string;
     avatarUrl?: string;
-    email?: string;
 };
 
-const getAuthHeaders = () => {
-    const authId = getUserIdFromToken();
-    return authId ? { "X-User-Id": String(authId) } : {};
-};
+export const getMyProfile = () => api.get<UserProfileDto>("/users/me").then(r => r.data);
 
-export const getUserProfile = async (authId: number): Promise<UserProfileDto> => {
-    
-    const { data } = await axios.get(`${API_URL}/users/${authId}`, {
-        headers: getAuthHeaders()
-    });
-    return data;
-};
+/** Профиль по authId */
+export const getUserProfile = (authId: number) =>
+    api.get<UserProfileDto>(`/users/${authId}`).then(r => r.data);
 
 /** Обновить свой профиль */
-export const updateMyProfile = async (profileData: {
-    username?: string;
-    firstName?: string;
-    lastName?: string;
-}): Promise<UserProfileDto> => {
-    const { data } = await axios.put(`${API_URL}/users/me`, profileData, {
-        headers: getAuthHeaders(),
-    });
-    return data;
-};
+export type UpdateUserProfileDto = Partial<Pick<UserProfileDto, "firstName" | "lastName" | "bio">>;
+export const updateMyProfile = (d: UpdateUserProfileDto) =>
+    api.put<UserProfileDto>("/users/me", d).then(r => r.data);
 
-/** Обновить аватар */
-export const updateMyAvatar = async (formData: FormData): Promise<any> => {
-    const { data } = await axios.patch(`${API_URL}/users/me/avatar`, formData, {
-        headers: {
-            ...getAuthHeaders(),
-            "Content-Type": "multipart/form-data",
-        },
-    });
-    return data;
-};
+/** Обновить аватар. */
+export const updateMyAvatar = (avatarUrl: string) =>
+    api.patch<UserProfileDto>("/users/me/avatar", { avatarUrl }).then(r => r.data);
 
 /** Создать пользователя (регистрация) */
 export const createUser = async (userData: {
@@ -54,12 +32,12 @@ export const createUser = async (userData: {
     email: string;
     password: string;
 }): Promise<any> => {
-    const { data } = await axios.post(`${API_URL}/users`, userData);
+    const { data } = await api.post("/users", userData);
     return data;
 };
 
 /** Валидация пользователей */
-export const validateUsers = async (userIds: number[]): Promise<any> => {
-    const { data } = await axios.post(`${API_URL}/users/validate`, userIds);
+export const validateUsers = async (authIds: number[]): Promise<boolean> => {
+    const { data } = await api.post<boolean>("/users/validate", authIds);
     return data;
 };

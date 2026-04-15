@@ -1,147 +1,97 @@
-import { useEffect, useState } from "react";
-import { getUserProfile, updateMyProfile, updateMyAvatar } from "@/features/user/api";
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
+import { getMyProfile, getUserProfile, updateMyAvatar, updateMyProfile, type UserProfileDto } from "@/features/user/api";
+import { uploadFile } from "@/features/media/api";
+import { resolveMediaUrl } from "@/shared/lib/media";
 import { getUserIdFromToken } from "@/shared/lib/jwt";
+import { Avatar } from "@/components/Avatar";
 
-export const ProfilePage = () => {
-  const myAuthId = Number(getUserIdFromToken() ?? 0);
-  const [profile, setProfile] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [editMode, setEditMode] = useState(false);
-  const [formData, setFormData] = useState({
-    username: "",
-    firstName: "",
-    lastName: "",
-  });
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [previewAvatar, setPreviewAvatar] = useState<string | null>(null);
+export default function ProfilePage() {
+  const { authId } = useParams();
+  const myAuthId = getUserIdFromToken();
+  const targetId = authId ? Number(authId) : myAuthId;
+  const own = targetId === myAuthId;
 
-  const loadProfile = async () => {
-    try {
-      console.log("User auth Id: ", myAuthId);
-      const data = await getUserProfile(myAuthId);
-      setProfile(data);
-      setFormData({
-        username: data.username || "",
-        firstName: data.firstName || "",
-        lastName: data.lastName || "",
-      });
-      setPreviewAvatar(data.avatarUrl || null);
-    } catch (error) {
-      console.error("Failed to load profile", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [p, setP] = useState<UserProfileDto | null>(null);
+  const [edit, setEdit] = useState(false);
+  const [form, setForm] = useState({ firstName: "", lastName: "", bio: "" });
+  const [zoom, setZoom] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (myAuthId) loadProfile();
-  }, [myAuthId]);
+    (async () => {
+      const profile = own ? await getMyProfile() : await getUserProfile(targetId!);
+      setP(profile);
+      setForm({
+        firstName: profile.firstName ?? "",
+        lastName: profile.lastName ?? "",
+        bio: profile.bio ?? "",
+      });
+    })();
+  }, [targetId, own]);
 
-  const handleSave = async () => {
-    try {
-      await updateMyProfile(formData);
-      if (avatarFile) {
-        const formData = new FormData();
-        formData.append("avatar", avatarFile);
-        await updateMyAvatar(formData);
-      }
-      setEditMode(false);
-      loadProfile(); // refresh
-    } catch (error) {
-      console.error("Failed to update profile", error);
-    }
-  };
+  if (!p) return <div>Загрузка…</div>;
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  async function save() {
+    const updated = await updateMyProfile(form);
+    setP(updated); setEdit(false);
+  }
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) {
-      setAvatarFile(file);
-      setPreviewAvatar(URL.createObjectURL(file));
-    }
-  };
-
-  if (loading) return <div>Loading...</div>;
+    if (!file) return;
+    const url = await uploadFile(file);
+    const updated = await updateMyAvatar(url);
+    setP(updated);
+  }
 
   return (
-    <div style={{ padding: 24, maxWidth: 600, margin: "0 auto" }}>
-      <h2>My Profile</h2>
-      <div style={{ display: "flex", gap: 24, alignItems: "start" }}>
-        <div style={{ textAlign: "center" }}>
-          {previewAvatar ? (
-            <img
-              src={previewAvatar}
-              alt="Avatar"
-              style={{ width: 120, height: 120, borderRadius: "50%", objectFit: "cover" }}
-            />
-          ) : (
-            <div
-              style={{
-                width: 120,
-                height: 120,
-                borderRadius: "50%",
-                background: "#ccc",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              No photo
-            </div>
-          )}
-          {editMode && (
-            <div style={{ marginTop: 8 }}>
-              <input type="file" accept="image/*" onChange={handleAvatarChange} />
-            </div>
-          )}
+      <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <Avatar url={p.avatarUrl} name={p.username} size={96} onClick={() => p.avatarUrl && setZoom(true)} />
+          <div>
+            <h2 style={{ margin: 0 }}>{p.username}</h2>
+            {p.email && <div style={{ color: "#607d8b" }}>{p.email}</div>}
+          </div>
         </div>
 
-        <div style={{ flex: 1 }}>
-          {!editMode ? (
+        {own && (
             <>
-              <p>
-                <strong>Username:</strong> {profile?.username}
-              </p>
-              <p>
-                <strong>Name:</strong> {profile?.firstName} {profile?.lastName}
-              </p>
-              <p>
-                <strong>Email:</strong> {profile?.email}
-              </p>
-              <button onClick={() => setEditMode(true)}>Edit Profile</button>
+              <input type="file" accept="image/*" hidden ref={fileRef} onChange={onFile} />
+              <button onClick={() => fileRef.current?.click()}>Сменить аватар</button>
             </>
-          ) : (
+        )}
+
+        {!edit ? (
             <>
-              <label>
-                Username:
-                <input
-                  value={formData.username}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                />
-              </label>
-              <label>
-                First Name:
-                <input
-                  value={formData.firstName}
-                  onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                />
-              </label>
-              <label>
-                Last Name:
-                <input
-                  value={formData.lastName}
-                  onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                />
-              </label>
-              <div style={{ marginTop: 16 }}>
-                <button onClick={handleSave}>Save</button>
-                <button onClick={() => setEditMode(false)} style={{ marginLeft: 8 }}>
-                  Cancel
-                </button>
+              <div><b>Имя:</b> {p.firstName ?? "—"}</div>
+              <div><b>Фамилия:</b> {p.lastName ?? "—"}</div>
+              <div><b>О себе:</b> {p.bio ?? "—"}</div>
+              {own && <button onClick={() => setEdit(true)}>Редактировать</button>}
+            </>
+        ) : (
+            <>
+              <input placeholder="Имя" value={form.firstName}
+                     onChange={e => setForm({ ...form, firstName: e.target.value })} />
+              <input placeholder="Фамилия" value={form.lastName}
+                     onChange={e => setForm({ ...form, lastName: e.target.value })} />
+              <textarea placeholder="О себе" value={form.bio}
+                        onChange={e => setForm({ ...form, bio: e.target.value })} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={save}>Сохранить</button>
+                <button onClick={() => setEdit(false)}>Отмена</button>
               </div>
             </>
-          )}
-        </div>
+        )}
+
+        {zoom && p.avatarUrl && (
+            <div onClick={() => setZoom(false)}
+                 style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)",
+                   display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+              <img src={resolveMediaUrl(p.avatarUrl)} style={{ maxWidth: "90vw", maxHeight: "90vh" }} />
+            </div>
+        )}
       </div>
-    </div>
   );
-};
+}
+

@@ -1,13 +1,10 @@
 import { useState } from "react";
 import { login, validate } from "@/features/auth/api";
-import { useAuthStore } from "@/app/store";
 import { useNavigate, Link } from "react-router-dom";
 
 export const getAuthToken = () => localStorage.getItem("token");
-export const setAuthToken = (token: string) => localStorage.setItem("token", token);
 
 export const LoginPage = () => {
-    const setAuth = useAuthStore((s) => s.setAuth);
     const navigate = useNavigate();
 
     const [username, setUsername] = useState("");
@@ -21,7 +18,7 @@ export const LoginPage = () => {
             const token = await login(username, password);
 
             localStorage.setItem("token", token);
-            navigate("/chat");
+            navigate("/chats");
         } catch (e) {
             setError("Invalid username or password");
         }

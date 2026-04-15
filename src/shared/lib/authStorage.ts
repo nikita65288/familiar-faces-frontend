@@ -1,13 +1,14 @@
-export const getAuthToken = (): string | null => {
-    return localStorage.getItem("token") ?? sessionStorage.getItem("token");
-};
+const KEY = "ff.token";
 
-export const setAuthToken = (token: string) => {
-    localStorage.setItem("token", token);
-    sessionStorage.setItem("token", token);
+export const getAuthToken = () =>
+    localStorage.getItem(KEY) ?? sessionStorage.getItem(KEY) ?? null;
+
+export const setAuthToken = (token: string, remember: boolean) => {
+    const store = remember ? localStorage : sessionStorage;
+    store.setItem(KEY, token);
 };
 
 export const clearAuthToken = () => {
-    localStorage.removeItem("token");
-    sessionStorage.removeItem("token");
+    localStorage.removeItem(KEY);
+    sessionStorage.removeItem(KEY);
 };

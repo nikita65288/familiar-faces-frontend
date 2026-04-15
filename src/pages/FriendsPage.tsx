@@ -1,248 +1,135 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  getFriends,
-  getIncomingRequests,
-  getOutgoingRequests,
-  sendFriendRequest,
-  acceptFriendRequest,
-  rejectFriendRequest,
-  cancelFriendRequest,
-  removeFriend,
+  acceptRequest, cancelRequest, getFriends, getIncoming, getOutgoing,
+  rejectRequest, removeFriend, sendFriendRequest,
 } from "@/features/friends/api";
+import type { FriendshipDto } from "@/entities/friendship/types";
+import { getUserProfile, type UserProfileDto } from "@/features/user/api";
+import { getUserIdFromToken } from "@/shared/lib/jwt";
+import { createPrivateChat } from "@/features/chat/api";
+import { Avatar } from "@/components/Avatar";
 
-type Friend = {
-  id: number;
-  authId: number;
-  username?: string;
-  firstName?: string;
-  lastName?: string;
-  avatarUrl?: string;
-};
+export default function FriendsPage() {
+  const nav = useNavigate();
+  const myAuthId = getUserIdFromToken();
 
-type RequestItem = {
-  friendshipId: number;
-  sender: Friend;
-  recipient: Friend;
-  createdAt: string;
-};
+  const [friends, setFriends] = useState<FriendshipDto[]>([]);
+  const [incoming, setIncoming] = useState<FriendshipDto[]>([]);
+  const [outgoing, setOutgoing] = useState<FriendshipDto[]>([]);
+  const [profiles, setProfiles] = useState<Record<number, UserProfileDto>>({});
+  const [addId, setAddId] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-export const FriendsPage = () => {
-  //const myAuthId = Number(getUserIdFromToken() ?? 0);
-  const [activeTab, setActiveTab] = useState<"friends" | "incoming" | "outgoing">("friends");
-  const [friends, setFriends] = useState<Friend[]>([]);
-  const [incoming, setIncoming] = useState<RequestItem[]>([]);
-  const [outgoing, setOutgoing] = useState<RequestItem[]>([]);
-  const [searchAuthId, setSearchAuthId] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const loadData = async () => {
-    setLoading(true);
+  async function loadAll() {
+    setError(null);
     try {
-      const [friendsRes, incomingRes, outgoingRes] = await Promise.all([
-        getFriends(),
-        getIncomingRequests(),
-        getOutgoingRequests(),
-      ]);
-      // Если ответ — массив, берём его; иначе пытаемся взять поле content
-      setFriends(Array.isArray(friendsRes) ? friendsRes : (friendsRes?.content || []));
-      setIncoming(Array.isArray(incomingRes) ? incomingRes : (incomingRes?.content || []));
-      setOutgoing(Array.isArray(outgoingRes) ? outgoingRes : (outgoingRes?.content || []));
-    } catch (error) {
-      console.error("Failed to load friends data", error);
-    } finally {
-      setLoading(false);
+      const [f, i, o] = await Promise.all([getFriends(), getIncoming(), getOutgoing()]);
+      setFriends(f); setIncoming(i); setOutgoing(o);
+
+      const ids = new Set<number>();
+      [...f, ...i, ...o].forEach(fr => { ids.add(fr.requesterId); ids.add(fr.addresseeId); });
+      if (myAuthId) ids.delete(myAuthId);
+      const needed = [...ids].filter(id => !profiles[id]);
+      const loaded = await Promise.all(
+          needed.map(id => getUserProfile(id).catch(() => null)),
+      );
+      const map = { ...profiles };
+      loaded.forEach((p, idx) => { if (p) map[needed[idx]] = p; });
+      setProfiles(map);
+    } catch (e: any) {
+      setError(`${e?.response?.status ?? ""} ${e?.message ?? "Ошибка"}`);
     }
-  };
+  }
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
 
-  const handleSendRequest = async () => {
-    if (!searchAuthId.trim()) return;
-    try {
-      await sendFriendRequest(Number(searchAuthId));
-      setSearchAuthId("");
-      loadData(); // обновить исходящие
-    } catch (error) {
-      alert("Failed to send request");
-    }
-  };
+  const otherIdOf = (fr: FriendshipDto) =>
+      fr.requesterId === myAuthId ? fr.addresseeId : fr.requesterId;
 
-  const handleAccept = async (friendshipId: number) => {
-    await acceptFriendRequest(friendshipId);
-    loadData();
-  };
-
-  const handleReject = async (friendshipId: number) => {
-    await rejectFriendRequest(friendshipId);
-    loadData();
-  };
-
-  const handleCancel = async (friendshipId: number) => {
-    await cancelFriendRequest(friendshipId);
-    loadData();
-  };
-
-  const handleRemoveFriend = async (friendAuthId: number) => {
-    if (window.confirm("Remove this friend?")) {
-      await removeFriend(friendAuthId);
-      loadData();
-    }
-  };
-
-  const renderFriendItem = (friend: Friend) => (
-    <div
-      key={friend.authId}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "8px 0",
-        borderBottom: "1px solid #eee",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <img
-          src={friend.avatarUrl || "/default-avatar.png"}
-          alt=""
-          style={{ width: 40, height: 40, borderRadius: "50%" }}
-        />
-        <span>
-          {friend.firstName} {friend.lastName} (@{friend.username})
-        </span>
-      </div>
-      <button onClick={() => handleRemoveFriend(friend.authId)}>Remove</button>
-    </div>
-  );
-
-  const renderRequestItem = (
-    item: RequestItem,
-    type: "incoming" | "outgoing"
-  ) => {
-    const user = type === "incoming" ? item.sender : item.recipient;
+  const renderUser = (uid: number) => {
+    const u = profiles[uid];
+    const label = u?.username ?? `user_${uid}`;
     return (
-      <div
-        key={item.friendshipId}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "8px 0",
-          borderBottom: "1px solid #eee",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <img
-            src={user.avatarUrl || "/default-avatar.png"}
-            alt=""
-            style={{ width: 40, height: 40, borderRadius: "50%" }}
-          />
-          <span>
-            {user.firstName} {user.lastName} (@{user.username})
-          </span>
+        <div
+            style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", flex: 1 }}
+            onClick={() => nav(`/profile/${uid}`)}
+        >
+          <Avatar url={u?.avatarUrl} name={label} />
+          <span style={{ fontWeight: 500 }}>{label}</span>
         </div>
-        <div>
-          {type === "incoming" ? (
-            <>
-              <button onClick={() => handleAccept(item.friendshipId)}>Accept</button>
-              <button onClick={() => handleReject(item.friendshipId)} style={{ marginLeft: 8 }}>
-                Reject
-              </button>
-            </>
-          ) : (
-            <button onClick={() => handleCancel(item.friendshipId)}>Cancel</button>
-          )}
-        </div>
-      </div>
     );
   };
 
+  async function handleAdd() {
+    const n = Number(addId);
+    if (!n) return;
+    try {
+      await sendFriendRequest(n);
+      setAddId("");
+      await loadAll();
+    } catch (e: any) {
+      setError(`${e?.response?.status ?? ""} ${e?.response?.data?.message ?? e.message}`);
+    }
+  }
+
+  async function openChat(uid: number) {
+    const firstMessage = window.prompt("Первое сообщение (можно пропустить):") ?? undefined;
+    const chat = await createPrivateChat(uid, firstMessage || undefined);
+    nav(`/chats?chat=${chat.id}`);
+  }
+
   return (
-    <div style={{ padding: 24 }}>
-      <h2>Friends</h2>
+      <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+        {error && <div style={{ color: "crimson" }}>{error}</div>}
 
-      <div style={{ marginBottom: 20 }}>
-        <input
-          type="number"
-          placeholder="Enter user AuthID"
-          value={searchAuthId}
-          onChange={(e) => setSearchAuthId(e.target.value)}
-        />
-        <button onClick={handleSendRequest} style={{ marginLeft: 8 }}>
-          Send Friend Request
-        </button>
+        <section>
+          <h3>Добавить в друзья</h3>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={addId} onChange={(e) => setAddId(e.target.value)} placeholder="authId пользователя" />
+            <button onClick={handleAdd}>Отправить запрос</button>
+          </div>
+        </section>
+
+        <section>
+          <h3>Входящие запросы ({incoming.length})</h3>
+          {incoming.map(fr => (
+              <div key={fr.id} style={row}>
+                {renderUser(fr.requesterId)}
+                <button onClick={async () => { await acceptRequest(fr.id); loadAll(); }}>Принять</button>
+                <button onClick={async () => { await rejectRequest(fr.id); loadAll(); }}>Отклонить</button>
+              </div>
+          ))}
+        </section>
+
+        <section>
+          <h3>Исходящие запросы ({outgoing.length})</h3>
+          {outgoing.map(fr => (
+              <div key={fr.id} style={row}>
+                {renderUser(fr.addresseeId)}
+                <button onClick={async () => { await cancelRequest(fr.id); loadAll(); }}>Отменить</button>
+              </div>
+          ))}
+        </section>
+
+        <section>
+          <h3>Друзья ({friends.length})</h3>
+          {friends.map(fr => {
+            const uid = otherIdOf(fr);
+            return (
+                <div key={fr.id} style={row}>
+                  {renderUser(uid)}
+                  <button onClick={() => openChat(uid)}>Написать</button>
+                  <button onClick={async () => { await removeFriend(uid); loadAll(); }}>Удалить</button>
+                </div>
+            );
+          })}
+        </section>
       </div>
-
-      <div style={{ display: "flex", gap: 16, borderBottom: "1px solid #ccc", marginBottom: 16 }}>
-        <button
-          onClick={() => setActiveTab("friends")}
-          style={{
-            fontWeight: activeTab === "friends" ? "bold" : "normal",
-            border: "none",
-            background: "none",
-            padding: "8px 0",
-          }}
-        >
-          My Friends ({friends.length})
-        </button>
-        <button
-          onClick={() => setActiveTab("incoming")}
-          style={{
-            fontWeight: activeTab === "incoming" ? "bold" : "normal",
-            border: "none",
-            background: "none",
-            padding: "8px 0",
-          }}
-        >
-          Incoming ({incoming.length})
-        </button>
-        <button
-          onClick={() => setActiveTab("outgoing")}
-          style={{
-            fontWeight: activeTab === "outgoing" ? "bold" : "normal",
-            border: "none",
-            background: "none",
-            padding: "8px 0",
-          }}
-        >
-          Outgoing ({outgoing.length})
-        </button>
-      </div>
-
-      {loading ? (
-        <div>Loading...</div>
-      ) : (
-        <>
-          {activeTab === "friends" && (
-            <div>
-              {friends.length === 0 ? (
-                <p>No friends yet.</p>
-              ) : (
-                friends.map(renderFriendItem)
-              )}
-            </div>
-          )}
-          {activeTab === "incoming" && (
-            <div>
-              {incoming.length === 0 ? (
-                <p>No incoming requests.</p>
-              ) : (
-                incoming.map((item) => renderRequestItem(item, "incoming"))
-              )}
-            </div>
-          )}
-          {activeTab === "outgoing" && (
-            <div>
-              {outgoing.length === 0 ? (
-                <p>No outgoing requests.</p>
-              ) : (
-                outgoing.map((item) => renderRequestItem(item, "outgoing"))
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </div>
   );
+}
+
+const row: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 8,
+  padding: "8px 0", borderBottom: "1px solid #eee",
 };
