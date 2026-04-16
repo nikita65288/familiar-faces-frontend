@@ -2,12 +2,6 @@ import { resolveMediaUrl } from "@/shared/lib/media";
 
 type Props = { url?: string | null; name?: string; size?: number; onClick?: () => void };
 
-const getInitials = (name?: string) => {
-    if (!name) return "?";
-    const parts = name.trim().split(/\s+/).slice(0, 2);
-    return parts.map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";
-};
-
 export function Avatar({ url, name, size = 36, onClick }: Props) {
     const src = resolveMediaUrl(url ?? undefined);
     const initials = (name ?? "?").trim().slice(0, 1).toUpperCase();

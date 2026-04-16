@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { login, validate } from "@/features/auth/api";
+import { login } from "@/features/auth/api";
 import { useNavigate, Link } from "react-router-dom";
 
 export const getAuthToken = () => localStorage.getItem("token");
