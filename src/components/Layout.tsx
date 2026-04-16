@@ -14,8 +14,9 @@ export default function Layout() {
     const logout = () => { clearAuthToken(); nav("/login"); };
 
     return (
-        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-            <header style={{ display: "flex", gap: 8, padding: 12, borderBottom: "1px solid #eee", alignItems: "center" }}>
+        // height:100vh + overflow:hidden => дочерние страницы управляют своим скроллом
+        <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <header style={{ display: "flex", gap: 8, padding: 12, borderBottom: "1px solid #eee", alignItems: "center", flexShrink: 0 }}>
                 {tabs.map(t => {
                     const active = loc.pathname.startsWith(t.path);
                     return (
@@ -38,7 +39,10 @@ export default function Layout() {
                     Logout
                 </button>
             </header>
-            <main style={{ flex: 1, padding: 16 }}><Outlet /></main>
+            {/* minHeight:0 нужен, чтобы flex-child мог сжиматься и передавать скролл внутрь */}
+            <main style={{ flex: 1, padding: 16, minHeight: 0, overflow: "hidden" }}>
+                <Outlet />
+            </main>
         </div>
     );
 }
