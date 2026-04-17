@@ -51,7 +51,7 @@ export default function ProfilePage() {
           <Avatar url={p.avatarUrl} name={p.username} size={96} onClick={() => p.avatarUrl && setZoom(true)} />
           <div>
             <h2 style={{ margin: 0 }}>{p.username}</h2>
-            {p.email && <div style={{ color: "#607d8b" }}>{p.email}</div>}
+            {own && p.email && <div style={{ color: "#607d8b" }}>{p.email}</div>}
           </div>
         </div>
 

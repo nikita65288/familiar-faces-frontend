@@ -6,6 +6,9 @@ import ProfilePage from "@/pages/ProfilePage";
 import FriendsPage from "@/pages/FriendsPage";
 import ChatPage from "@/pages/ChatPage";
 import { getAuthToken } from "@/shared/lib/authStorage";
+import { initTheme } from "@/shared/lib/theme";
+
+initTheme();
 
 function Protected({ children }: { children: React.ReactNode }) {
     return getAuthToken() ? <>{children}</> : <Navigate to="/login" replace />;

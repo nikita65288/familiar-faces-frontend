@@ -5,7 +5,7 @@ import {
   rejectRequest, removeFriend, sendFriendRequest,
 } from "@/features/friends/api";
 import type { FriendshipDto } from "@/entities/friendship/types";
-import { getUserProfile, type UserProfileDto } from "@/features/user/api";
+import { getUserProfile, searchUserByUsername, type UserProfileDto } from "@/features/user/api";
 import { getUserIdFromToken } from "@/shared/lib/jwt";
 import { createPrivateChat } from "@/features/chat/api";
 import { Avatar } from "@/components/Avatar";
@@ -18,7 +18,11 @@ export default function FriendsPage() {
   const [incoming, setIncoming] = useState<FriendshipDto[]>([]);
   const [outgoing, setOutgoing] = useState<FriendshipDto[]>([]);
   const [profiles, setProfiles] = useState<Record<number, UserProfileDto>>({});
-  const [addId, setAddId] = useState("");
+
+  const [searchUsername, setSearchUsername] = useState("");
+  const [searchResult, setSearchResult] = useState<UserProfileDto | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
 
   async function loadAll() {
@@ -31,9 +35,7 @@ export default function FriendsPage() {
       [...f, ...i, ...o].forEach(fr => { ids.add(fr.requesterId); ids.add(fr.addresseeId); });
       if (myAuthId) ids.delete(myAuthId);
       const needed = [...ids].filter(id => !profiles[id]);
-      const loaded = await Promise.all(
-          needed.map(id => getUserProfile(id).catch(() => null)),
-      );
+      const loaded = await Promise.all(needed.map(id => getUserProfile(id).catch(() => null)));
       const map = { ...profiles };
       loaded.forEach((p, idx) => { if (p) map[needed[idx]] = p; });
       setProfiles(map);
@@ -61,15 +63,27 @@ export default function FriendsPage() {
     );
   };
 
-  async function handleAdd() {
-    const n = Number(addId);
-    if (!n) return;
+  async function handleSearch() {
+    if (!searchUsername.trim()) return;
+    setSearchError(null);
+    setSearchResult(null);
     try {
-      await sendFriendRequest(n);
-      setAddId("");
+      const user = await searchUserByUsername(searchUsername.trim());
+      setSearchResult(user);
+    } catch {
+      setSearchError("Пользователь не найден");
+    }
+  }
+
+  async function handleAddFound() {
+    if (!searchResult?.authId) return;
+    try {
+      await sendFriendRequest(searchResult.authId);
+      setSearchResult(null);
+      setSearchUsername("");
       await loadAll();
     } catch (e: any) {
-      setError(`${e?.response?.status ?? ""} ${e?.response?.data?.message ?? e.message}`);
+      setSearchError(`${e?.response?.status ?? ""} ${e?.response?.data?.message ?? e.message}`);
     }
   }
 
@@ -86,9 +100,27 @@ export default function FriendsPage() {
         <section>
           <h3>Добавить в друзья</h3>
           <div style={{ display: "flex", gap: 8 }}>
-            <input value={addId} onChange={(e) => setAddId(e.target.value)} placeholder="authId пользователя" />
-            <button onClick={handleAdd}>Отправить запрос</button>
+            <input
+                value={searchUsername}
+                onChange={(e) => setSearchUsername(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                placeholder="Имя пользователя"
+            />
+            <button onClick={handleSearch}>Найти</button>
           </div>
+          {searchError && <div style={{ color: "crimson", marginTop: 4 }}>{searchError}</div>}
+          {searchResult && (
+              <div style={{ ...row, marginTop: 8 }}>
+                <div
+                    style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", flex: 1 }}
+                    onClick={() => searchResult.authId && nav(`/profile/${searchResult.authId}`)}
+                >
+                  <Avatar url={searchResult.avatarUrl} name={searchResult.username ?? ""} />
+                  <span style={{ fontWeight: 500 }}>{searchResult.username}</span>
+                </div>
+                <button onClick={handleAddFound}>Добавить в друзья</button>
+              </div>
+          )}
         </section>
 
         <section>

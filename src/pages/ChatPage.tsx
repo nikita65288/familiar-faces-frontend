@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
     CHAT_TYPE, type ChatDto, createGroupChat, getChats, getMessages,
-    leaveChat, type MessageDto, sendMessage, updateChatAvatar,
+    leaveChat, type MessageDto, sendMessage, updateChatAvatar, toggleReaction,
 } from "@/features/chat/api";
 import { getFriends } from "@/features/friends/api";
 import { getUserProfile, type UserProfileDto } from "@/features/user/api";
@@ -13,6 +13,7 @@ import { resolveMediaUrl } from "@/shared/lib/media";
 import { Avatar } from "@/components/Avatar";
 import type { Client, StompSubscription } from "@stomp/stompjs";
 
+const REACTIONS = ["\u270D", "\uD83D\uDCAF", "\uD83E\uDD2E"]; // ✍️ 💯 🤮
 const PAGE_SIZE = 30;
 
 // --- seenAt (непрочитанные) в localStorage ---------------------------------
@@ -60,6 +61,8 @@ export default function ChatPage() {
     const justPrependedRef = useRef(false);
     // Однократное чтение ?chat= из URL
     const didAutoOpenRef = useRef(false);
+
+    const [hoveredMsgId, setHoveredMsgId] = useState<number | null>(null);
 
     useEffect(() => { saveSeenAt(seenAt); }, [seenAt]);
 
@@ -160,6 +163,13 @@ export default function ChatPage() {
                         prev.map(x => messageIds.includes(x.id) ? { ...x, isRead: true } : x)
                     );
                 }));
+
+                subs.push(c.subscribe(`/topic/chats.${chat.id}.reactions`, (msg) => {
+                    const { messageId, reactions } = JSON.parse(msg.body) as {
+                        messageId: number; reactions: Record<string, number[]>;
+                    };
+                    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions } : m));
+                }));
             });
         });
         stompRef.current = client;
@@ -259,6 +269,14 @@ export default function ChatPage() {
         } finally {
             setUploadPercent(null);
             setSending(false);
+        }
+    }
+
+    async function handleReaction(chatId: number, messageId: number, emoji: string) {
+        try {
+            await toggleReaction(chatId, messageId, emoji);
+        } catch (e) {
+            console.error("Failed to toggle reaction", e);
         }
     }
 
@@ -383,19 +401,79 @@ export default function ChatPage() {
 
                             {messages.map(m => {
                                 const mine = m.senderId === myId;
+                                const reactions = m.reactions ?? {};
+                                const hasReactions = Object.values(reactions).some(u => u.length > 0);
                                 return (
-                                    <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start",
-                                        background: mine ? "#1976d2" : "#eceff1", color: mine ? "#fff" : "#263238",
-                                        padding: 8, borderRadius: 8, maxWidth: "60%" }}>
-                                        {m.attachmentUrl && (
-                                            <img src={resolveMediaUrl(m.attachmentUrl)}
-                                                 onClick={() => setLightbox(resolveMediaUrl(m.attachmentUrl)!)}
-                                                 style={{ maxWidth: 180, maxHeight: 180, borderRadius: 6, cursor: "pointer", display: "block" }} />
+                                    <div
+                                        key={m.id}
+                                        style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "60%", display: "flex", flexDirection: "column" }}
+                                        onMouseEnter={() => setHoveredMsgId(m.id)}
+                                        onMouseLeave={() => setHoveredMsgId(null)}
+                                    >
+                                        {/* Панель реакций — над пузырём, внутри того же hover-контейнера */}
+                                        {hoveredMsgId === m.id && (
+                                            <div style={{
+                                                display: "flex",
+                                                justifyContent: mine ? "flex-end" : "flex-start",
+                                                marginBottom: 2,
+                                            }}>
+                                                <div style={{
+                                                    display: "inline-flex", gap: 2,
+                                                    background: "var(--bg, #fff)",
+                                                    border: "1px solid var(--border, #e0e0e0)",
+                                                    borderRadius: 20, padding: "3px 8px",
+                                                    boxShadow: "0 2px 8px rgba(0,0,0,.18)",
+                                                }}>
+                                                    {REACTIONS.map(emoji => (
+                                                        <button
+                                                            key={emoji}
+                                                            onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 2 }}
+                                                        >
+                                                            {emoji}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         )}
-                                        {m.content && <div>{m.content}</div>}
+
+                                        {/* Пузырь сообщения */}
+                                        <div style={{
+                                            background: mine ? "#1976d2" : "#eceff1",
+                                            color: mine ? "#fff" : "#263238",
+                                            padding: 8, borderRadius: 8,
+                                        }}>
+                                            {m.attachmentUrl && (
+                                                <img src={resolveMediaUrl(m.attachmentUrl)}
+                                                     onClick={() => setLightbox(resolveMediaUrl(m.attachmentUrl)!)}
+                                                     style={{ maxWidth: 180, maxHeight: 180, borderRadius: 6, cursor: "pointer", display: "block" }} />
+                                            )}
+                                            {m.content && <div>{m.content}</div>}
+                                        </div>
+
+                                        {/* Счётчики реакций */}
+                                        {hasReactions && (
+                                            <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+                                                {Object.entries(reactions)
+                                                    .filter(([, users]) => users.length > 0)
+                                                    .map(([emoji, users]) => (
+                                                        <button key={emoji}
+                                                                onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                                style={{
+                                                                    background: myId && users.includes(myId) ? "#e3f2fd" : "#f5f5f5",
+                                                                    border: myId && users.includes(myId) ? "1px solid #90caf9" : "1px solid #e0e0e0",
+                                                                    borderRadius: 12, padding: "2px 8px", cursor: "pointer",
+                                                                    fontSize: 13, display: "flex", alignItems: "center", gap: 4,
+                                                                }}>
+                                                            {emoji} {users.length}
+                                                        </button>
+                                                    ))}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
+
                         </div>
 
                         <div style={{ borderTop: "1px solid #eee", padding: 8, display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>

@@ -20,6 +20,7 @@ export type MessageDto = {
     id: number; chatId: number; senderId: number;
     content?: string; attachmentUrl?: string;
     isRead: boolean; createdAt: string;
+    reactions?: Record<string, number[]>;
 };
 
 export const getChats = () => api.get<ChatDto[]>("/chats").then(r => r.data);
@@ -50,3 +51,6 @@ export const updateChatAvatar = (chatId: number, avatarUrl: string) =>
 
 export const leaveChat = (chatId: number) =>
     api.delete(`/chats/${chatId}/participants/me`).then(r => r.data);
+
+export const toggleReaction = (chatId: number, messageId: number, emoji: string) =>
+    api.post(`/chats/${chatId}/messages/${messageId}/reactions`, { emoji }).then(r => r.data);
