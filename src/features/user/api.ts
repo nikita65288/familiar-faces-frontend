@@ -39,3 +39,7 @@ export const validateUsers = async (authIds: number[]): Promise<boolean> => {
     const { data } = await api.post<boolean>("/users/validate", authIds);
     return data;
 };
+
+export const searchUsersByPrefix = (prefix: string) =>
+    api.get<UserProfileDto[]>("/users/search/suggest", { params: { prefix } }).then(r => r.data);
+

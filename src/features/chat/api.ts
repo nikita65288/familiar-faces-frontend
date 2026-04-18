@@ -21,6 +21,7 @@ export type MessageDto = {
     content?: string; attachmentUrl?: string;
     isRead: boolean; createdAt: string;
     reactions?: Record<string, number[]>;
+    replyToMessageId?: number;
 };
 
 export const getChats = () => api.get<ChatDto[]>("/chats").then(r => r.data);
@@ -28,8 +29,8 @@ export const getMessages = (chatId: number, page = 0, size = 30) =>
     api.get<{ content: MessageDto[] }>(`/chats/${chatId}/messages`, { params: { page, size } })
         .then(r => r.data);
 
-export const sendMessage = (chatId: number, content: string, attachmentUrl?: string) =>
-    api.post<MessageDto>(`/chats/${chatId}/messages`, { content, attachmentUrl }).then(r => r.data);
+export const sendMessage = (chatId: number, content: string, attachmentUrl?: string, replyToMessageId?: number) =>
+    api.post<MessageDto>(`/chats/${chatId}/messages`, { content, attachmentUrl, replyToMessageId }).then(r => r.data);
 
 export const markAsRead = (chatId: number) =>
     api.post(`/chats/${chatId}/read`).then(r => r.data);
@@ -54,3 +55,9 @@ export const leaveChat = (chatId: number) =>
 
 export const toggleReaction = (chatId: number, messageId: number, emoji: string) =>
     api.post(`/chats/${chatId}/messages/${messageId}/reactions`, { emoji }).then(r => r.data);
+
+export const addParticipantToChat = (chatId: number, userId: number) =>
+    api.post(`/chats/${chatId}/participants`, { userId }).then(r => r.data);
+
+export const getOrCreateSelfChat = () =>
+    api.post<ChatDto>("/chats/self").then(r => r.data);

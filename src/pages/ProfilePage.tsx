@@ -16,17 +16,14 @@ export default function ProfilePage() {
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState({ firstName: "", lastName: "", bio: "" });
   const [zoom, setZoom] = useState(false);
+  const [avatarLoading, setAvatarLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     (async () => {
       const profile = own ? await getMyProfile() : await getUserProfile(targetId!);
       setP(profile);
-      setForm({
-        firstName: profile.firstName ?? "",
-        lastName: profile.lastName ?? "",
-        bio: profile.bio ?? "",
-      });
+      setForm({ firstName: profile.firstName ?? "", lastName: profile.lastName ?? "", bio: profile.bio ?? "" });
     })();
   }, [targetId, own]);
 
@@ -40,15 +37,35 @@ export default function ProfilePage() {
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = await uploadFile(file);
-    const updated = await updateMyAvatar(url);
-    setP(updated);
+    setAvatarLoading(true);
+    try {
+      const url = await uploadFile(file);
+      const updated = await updateMyAvatar(url);
+      setP(updated);
+    } finally {
+      setAvatarLoading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   return (
       <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Avatar url={p.avatarUrl} name={p.username} size={96} onClick={() => p.avatarUrl && setZoom(true)} />
+          <div style={{ position: "relative", width: 96, height: 96 }}>
+            <Avatar url={p.avatarUrl} name={p.username} size={96} onClick={() => p.avatarUrl && setZoom(true)} />
+            {avatarLoading && (
+                <div style={{
+                  position: "absolute", inset: 0, borderRadius: "50%",
+                  background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <svg width="36" height="36" viewBox="0 0 36 36">
+                    <circle cx="18" cy="18" r="14" fill="none" stroke="#fff" strokeWidth="3" strokeDasharray="60" strokeDashoffset="20" strokeLinecap="round">
+                      <animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="0.9s" repeatCount="indefinite" />
+                    </circle>
+                  </svg>
+                </div>
+            )}
+          </div>
           <div>
             <h2 style={{ margin: 0 }}>{p.username}</h2>
             {own && p.email && <div style={{ color: "#607d8b" }}>{p.email}</div>}
@@ -58,7 +75,9 @@ export default function ProfilePage() {
         {own && (
             <>
               <input type="file" accept="image/*" hidden ref={fileRef} onChange={onFile} />
-              <button onClick={() => fileRef.current?.click()}>Сменить аватар</button>
+              <button onClick={() => fileRef.current?.click()} disabled={avatarLoading}>
+                {avatarLoading ? "Загрузка…" : "Сменить аватар"}
+              </button>
             </>
         )}
 
@@ -71,12 +90,9 @@ export default function ProfilePage() {
             </>
         ) : (
             <>
-              <input placeholder="Имя" value={form.firstName}
-                     onChange={e => setForm({ ...form, firstName: e.target.value })} />
-              <input placeholder="Фамилия" value={form.lastName}
-                     onChange={e => setForm({ ...form, lastName: e.target.value })} />
-              <textarea placeholder="О себе" value={form.bio}
-                        onChange={e => setForm({ ...form, bio: e.target.value })} />
+              <input placeholder="Имя" value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} />
+              <input placeholder="Фамилия" value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} />
+              <textarea placeholder="О себе" value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} />
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={save}>Сохранить</button>
                 <button onClick={() => setEdit(false)}>Отмена</button>
@@ -86,12 +102,10 @@ export default function ProfilePage() {
 
         {zoom && p.avatarUrl && (
             <div onClick={() => setZoom(false)}
-                 style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)",
-                   display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+                 style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
               <img src={resolveMediaUrl(p.avatarUrl)} style={{ maxWidth: "90vw", maxHeight: "90vh" }} />
             </div>
         )}
       </div>
   );
 }
-
