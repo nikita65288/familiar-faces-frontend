@@ -100,6 +100,13 @@
   box-sizing: border-box;
 }
 
+@media (max-width: 768px) {
+  #root {
+    width: 100%;
+    border-inline: none;
+  }
+}
+
 body {
   margin: 0;
   font-family: var(--sans);

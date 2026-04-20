@@ -17,6 +17,7 @@ import type { Client, StompSubscription } from "@stomp/stompjs";
 const REACTIONS = ["✍️", "💯", "🤮"];
 const PAGE_SIZE = 30;
 const MAX_LINES = 5;
+const MOBILE_BREAKPOINT = 768;
 
 const SEEN_AT_KEY = "ff.chat.seenAt";
 function loadSeenAt(): Record<number, string> {
@@ -34,10 +35,23 @@ function formatTime(ts: unknown): string {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function useIsMobile() {
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" && window.innerWidth <= MOBILE_BREAKPOINT
+    );
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
+    return isMobile;
+}
+
 export default function ChatPage() {
     const nav = useNavigate();
     const [sp] = useSearchParams();
     const myId = getUserIdFromToken();
+    const isMobile = useIsMobile();
 
     const [chats, setChats] = useState<ChatDto[]>([]);
     const [selected, setSelected] = useState<ChatDto | null>(null);
@@ -62,6 +76,10 @@ export default function ChatPage() {
     const [hasMore, setHasMore] = useState(false);
     const [loadingOlder, setLoadingOlder] = useState(false);
 
+    // Кэш содержимого сообщений по id — чтобы реплай показывал контент,
+    // даже если оригинал ушёл за пределы загруженной страницы.
+    const msgCacheRef = useRef<Record<number, MessageDto>>({});
+
     const stompRef = useRef<Client | null>(null);
     const fileRef = useRef<HTMLInputElement | null>(null);
     const avatarFileRef = useRef<HTMLInputElement | null>(null);
@@ -76,6 +94,11 @@ export default function ChatPage() {
     useEffect(() => { selectedIdRef.current = selected?.id ?? null; }, [selected?.id]);
     useEffect(() => { saveSeenAt(seenAt); }, [seenAt]);
     useEffect(() => { setTypingUsers({}); }, [selected?.id]);
+
+    // Обновляем кэш сообщений при каждом изменении messages
+    useEffect(() => {
+        messages.forEach(m => { msgCacheRef.current[m.id] = m; });
+    }, [messages]);
 
     function markChatSeen(chatId: number, at?: string) {
         setSeenAt(prev => ({ ...prev, [chatId]: at ?? new Date().toISOString() }));
@@ -142,6 +165,7 @@ export default function ChatPage() {
                 subs.push(c.subscribe(`/topic/chats.${chat.id}`, (msg) => {
                     const m: MessageDto = JSON.parse(msg.body);
                     if (m.chatId !== chat.id) return;
+                    msgCacheRef.current[m.id] = m;
                     if (selectedIdRef.current === m.chatId) {
                         setMessages(prev => appendUnique(prev, m));
                         markChatSeen(m.chatId, m.createdAt);
@@ -202,7 +226,6 @@ export default function ChatPage() {
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) el.scrollTop = el.scrollHeight;
     }, [messages]);
 
-    // Auto-focus input when chat opens
     useEffect(() => {
         if (selected) setTimeout(() => inputRef.current?.focus(), 50);
     }, [selected?.id]);
@@ -218,7 +241,6 @@ export default function ChatPage() {
 
     async function openSelfChat() {
         const chat = await getOrCreateSelfChat();
-        // Добавить в список, если ещё нет
         setChats(prev => prev.find(c => c.id === chat.id) ? prev : [chat, ...prev]);
         openChat(chat);
     }
@@ -288,10 +310,11 @@ export default function ChatPage() {
     async function handleSend() {
         if (!selected || sending || uploading) return;
         if (!text.trim() && !attach) return;
-        if (attach && !attachedUrl) return; // still uploading
+        if (attach && !attachedUrl) return;
         setSending(true);
         try {
             const sent = await sendMessage(selected.id, text, attachedUrl ?? undefined, replyTo?.id);
+            msgCacheRef.current[sent.id] = sent;
             setMessages(prev => appendUnique(prev, sent));
             setText("");
             setReplyTo(null);
@@ -357,247 +380,296 @@ export default function ChatPage() {
     const canSend = !sending && !uploading && (!!text.trim() || !!attachedUrl);
     const typingList = Object.keys(typingUsers).map(Number).filter(id => Date.now() - typingUsers[id] < 3500);
 
+    // === Мобильная логика ===
+    // На мобильном: если чат не выбран — показываем только список; если выбран — только чат.
+    const showSidebar = !isMobile || !selected;
+    const showMain = !isMobile || !!selected;
+
     return (
-        <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, height: "100%", minHeight: 0 }}>
-            {/* sidebar */}
-            <aside style={{ borderRight: "1px solid #eee", overflow: "auto", minHeight: 0 }}>
-                <button style={{ margin: 8 }} onClick={() => setShowNewGroup(true)}>+ New group</button>
-                <button style={{ margin: "0 8px 8px", display: "block", width: "calc(100% - 16px)", textAlign: "left" }}
-                        onClick={openSelfChat}>
-                    ⭐ Избранное
-                </button>
-                {chats.map(c => {
-                    const { title, avatar } = getChatDisplay(c);
-                    const unread = isChatUnread(c);
-                    return (
-                        <div key={c.id} onClick={() => openChat(c)}
-                             style={{ padding: 10, display: "flex", gap: 10, cursor: "pointer", background: selected?.id === c.id ? "#eef5ff" : "transparent" }}>
-                            <Avatar url={avatar} name={title} />
-                            <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <div style={{ fontWeight: unread ? 700 : 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
-                                    {unread && <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#1976d2", flexShrink: 0 }} />}
-                                </div>
-                                <div style={{ fontSize: 12, color: unread ? "#263238" : "#607d8b", fontWeight: unread ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {previewOf(c)}
+        <div
+            style={{
+                display: "grid",
+                gridTemplateColumns: isMobile ? "1fr" : "280px 1fr",
+                gap: isMobile ? 0 : 16,
+                height: "100%",
+                minHeight: 0,
+            }}
+        >
+            {showSidebar && (
+                <aside style={{
+                    borderRight: isMobile ? "none" : "1px solid #eee",
+                    overflow: "auto", minHeight: 0,
+                }}>
+                    <button style={{ margin: 8 }} onClick={() => setShowNewGroup(true)}>+ New group</button>
+                    <button style={{ margin: "0 8px 8px", display: "block", width: "calc(100% - 16px)", textAlign: "left" }}
+                            onClick={openSelfChat}>
+                        ⭐ Избранное
+                    </button>
+                    {chats.map(c => {
+                        const { title, avatar } = getChatDisplay(c);
+                        const unread = isChatUnread(c);
+                        return (
+                            <div key={c.id} onClick={() => openChat(c)}
+                                 style={{ padding: 10, display: "flex", gap: 10, cursor: "pointer", background: selected?.id === c.id && !isMobile ? "#eef5ff" : "transparent" }}>
+                                <Avatar url={avatar} name={title} />
+                                <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        <div style={{ fontWeight: unread ? 700 : 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+                                        {unread && <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#1976d2", flexShrink: 0 }} />}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: unread ? "#263238" : "#607d8b", fontWeight: unread ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {previewOf(c)}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    );
-                })}
-            </aside>
+                        );
+                    })}
+                </aside>
+            )}
 
-            {/* main */}
-            <section style={{ display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
-                {!selected ? <div style={{ padding: 16, color: "#607d8b" }}>Выберите чат</div> : (
-                    <>
-                        <header style={{ borderBottom: "1px solid #eee", padding: 12, flexShrink: 0 }}>
-                            <button onClick={() => setInfoOpen(true)}
-                                    style={{ background: "none", border: "none", fontSize: 18, fontWeight: 600, cursor: "pointer" }}>
-                                {getChatDisplay(selected).title}
-                            </button>
-                        </header>
-
-                        <div
-                            ref={messagesRef}
-                            onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-                            onDragLeave={() => setIsDragging(false)}
-                            onDrop={e => {
-                                e.preventDefault(); setIsDragging(false);
-                                const file = e.dataTransfer.files?.[0];
-                                if (file) attachFile(file);
-                            }}
-                            style={{
-                                flex: 1, minHeight: 0, overflowY: "auto", padding: 12,
-                                display: "flex", flexDirection: "column", gap: 6,
-                                outline: isDragging ? "2px dashed #1976d2" : "none",
-                                background: isDragging ? "#e3f2fd" : undefined,
-                            }}
-                        >
-                            {hasMore && (
-                                <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}>
-                                    <button type="button" onClick={loadOlder} disabled={loadingOlder}
-                                            style={{ padding: "6px 14px", borderRadius: 16, border: "1px solid #cfd8dc", background: "#fff", cursor: loadingOlder ? "default" : "pointer", color: "#37474f", fontSize: 12 }}>
-                                        {loadingOlder ? "Загрузка…" : "Загрузить старые сообщения"}
-                                    </button>
-                                </div>
-                            )}
-
-                            {messages.map(m => {
-                                const mine = m.senderId === myId;
-                                const reactions = m.reactions ?? {};
-                                const hasReactions = Object.values(reactions).some(u => u.length > 0);
-                                const isExpanded = expandedMsgs.has(m.id);
-                                const senderName = profiles[m.senderId]?.username ?? `user_${m.senderId}`;
-
-                                return (
-                                    <div
-                                        key={m.id}
-                                        data-msg-id={m.id}
-                                        style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "60%", display: "flex", flexDirection: "column", position: "relative" }}
-                                        onMouseEnter={e => handleMsgHover(e, m.id)}
-                                        onMouseLeave={() => setHoveredMsgId(null)}
+            {showMain && (
+                <section style={{ display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+                    {!selected ? <div style={{ padding: 16, color: "#607d8b" }}>Выберите чат</div> : (
+                        <>
+                            <header style={{ borderBottom: "1px solid #eee", padding: 12, flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                                {isMobile && (
+                                    <button
+                                        onClick={() => setSelected(null)}
+                                        style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", padding: "0 4px" }}
+                                        title="К списку чатов"
                                     >
-                                        {/* Reaction picker — абсолютно позиционирован, не двигает чат */}
-                                        {hoveredMsgId === m.id && (
-                                            <div style={{
-                                                position: "absolute",
-                                                [mine ? "right" : "left"]: 0,
-                                                ...(reactionPopupBelow ? { top: "100%", marginTop: 4 } : { bottom: "100%", marginBottom: 4 }),
-                                                zIndex: 10,
-                                            }}>
-                                                <div style={{
-                                                    display: "inline-flex", gap: 2,
-                                                    background: "#fff", border: "1px solid #e0e0e0",
-                                                    borderRadius: 20, padding: "3px 8px",
-                                                    boxShadow: "0 2px 8px rgba(0,0,0,.18)",
-                                                    whiteSpace: "nowrap",
-                                                }}>
-                                                    {REACTIONS.map(emoji => (
-                                                        <button key={emoji}
-                                                                onClick={() => handleReaction(m.chatId, m.id, emoji)}
-                                                                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 2 }}>
-                                                            {emoji}
-                                                        </button>
-                                                    ))}
-                                                    {/* 👇 Новая кнопка "Ответить" */}
-                                                    <button
-                                                        onClick={() => setReplyTo(m)}
-                                                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}
-                                                        title="Ответить"
-                                                    >
-                                                        ↩
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
+                                        ←
+                                    </button>
+                                )}
+                                <button onClick={() => setInfoOpen(true)}
+                                        style={{ background: "none", border: "none", fontSize: 18, fontWeight: 600, cursor: "pointer", flex: 1, textAlign: "left" }}>
+                                    {getChatDisplay(selected).title}
+                                </button>
+                            </header>
 
-                                        {/* Пузырь */}
-                                        <div style={{ background: mine ? "#1976d2" : "#eceff1", color: mine ? "#fff" : "#263238", padding: 8, borderRadius: 8 }}>
-                                            {m.replyToMessageId && (() => {
-                                                const orig = messages.find(x => x.id === m.replyToMessageId);
-                                                return (
+                            <div
+                                ref={messagesRef}
+                                onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                                onDragLeave={() => setIsDragging(false)}
+                                onDrop={e => {
+                                    e.preventDefault(); setIsDragging(false);
+                                    const file = e.dataTransfer.files?.[0];
+                                    if (file) attachFile(file);
+                                }}
+                                style={{
+                                    flex: 1, minHeight: 0, overflowY: "auto", padding: 12,
+                                    display: "flex", flexDirection: "column", gap: 6,
+                                    outline: isDragging ? "2px dashed #1976d2" : "none",
+                                    background: isDragging ? "#e3f2fd" : undefined,
+                                }}
+                            >
+                                {hasMore && (
+                                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}>
+                                        <button type="button" onClick={loadOlder} disabled={loadingOlder}
+                                                style={{ padding: "6px 14px", borderRadius: 16, border: "1px solid #cfd8dc", background: "#fff", cursor: loadingOlder ? "default" : "pointer", color: "#37474f", fontSize: 12 }}>
+                                            {loadingOlder ? "Загрузка…" : "Загрузить старые сообщения"}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {messages.map(m => {
+                                    const mine = m.senderId === myId;
+                                    const reactions = m.reactions ?? {};
+                                    const hasReactions = Object.values(reactions).some(u => u.length > 0);
+                                    const isExpanded = expandedMsgs.has(m.id);
+                                    const senderName = profiles[m.senderId]?.username ?? `user_${m.senderId}`;
+
+                                    // --- REPLY lookup с fallback в кэш
+                                    const replyId = m.replyToMessageId;
+                                    const replyOrig: MessageDto | undefined = replyId
+                                        ? (messages.find(x => x.id === replyId) ?? msgCacheRef.current[replyId])
+                                        : undefined;
+
+                                    return (
+                                        <div
+                                            key={m.id}
+                                            data-msg-id={m.id}
+                                            style={{
+                                                alignSelf: mine ? "flex-end" : "flex-start",
+                                                maxWidth: isMobile ? "85%" : "60%",
+                                                display: "flex", flexDirection: "column", position: "relative",
+                                                // резерв под меню реакций, чтобы курсор не терял hover
+                                                paddingTop: 28,
+                                                marginTop: -28,
+                                            }}
+                                            onMouseEnter={e => handleMsgHover(e, m.id)}
+                                            onMouseLeave={() => setHoveredMsgId(null)}
+                                        >
+                                            {/* Reaction picker — ВПЛОТНУЮ к пузырю, без зазора */}
+                                            {hoveredMsgId === m.id && (
+                                                <div style={{
+                                                    position: "absolute",
+                                                    [mine ? "right" : "left"]: 0,
+                                                    ...(reactionPopupBelow
+                                                        ? { top: "100%", marginTop: 0 }
+                                                        : { bottom: "calc(100% - 28px)", marginBottom: 0 }),
+                                                    zIndex: 10,
+                                                    // Хитбокс-подушка, чтобы мышь не теряла hover между пузырём и меню
+                                                    padding: reactionPopupBelow ? "4px 0 0 0" : "0 0 4px 0",
+                                                }}>
+                                                    <div style={{
+                                                        display: "inline-flex", gap: 2,
+                                                        background: "#fff", border: "1px solid #e0e0e0",
+                                                        borderRadius: 20, padding: "3px 8px",
+                                                        boxShadow: "0 2px 8px rgba(0,0,0,.18)",
+                                                        whiteSpace: "nowrap",
+                                                    }}>
+                                                        {REACTIONS.map(emoji => (
+                                                            <button key={emoji}
+                                                                    onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 2 }}>
+                                                                {emoji}
+                                                            </button>
+                                                        ))}
+                                                        <button
+                                                            onClick={() => setReplyTo(m)}
+                                                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}
+                                                            title="Ответить"
+                                                        >
+                                                            ↩
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Пузырь */}
+                                            <div style={{ background: mine ? "#1976d2" : "#eceff1", color: mine ? "#fff" : "#263238", padding: 8, borderRadius: 8 }}>
+                                                {replyId && (
                                                     <div
-                                                        onClick={() => m.replyToMessageId && scrollToMessage(m.replyToMessageId)}
+                                                        onClick={() => scrollToMessage(replyId)}
                                                         style={{
-                                                            borderLeft: `3px solid ${mine ? "rgba(255,255,255,0.5)" : "#1976d2"}`,
-                                                            paddingLeft: 6, marginBottom: 4, opacity: 0.75,
+                                                            borderLeft: `3px solid ${mine ? "rgba(255,255,255,0.6)" : "#1976d2"}`,
+                                                            paddingLeft: 6, marginBottom: 6, opacity: 0.85,
                                                             cursor: "pointer", fontSize: 12,
                                                             maxHeight: 40, overflow: "hidden",
+                                                            background: mine ? "rgba(255,255,255,0.12)" : "rgba(25,118,210,0.08)",
+                                                            borderRadius: 4, padding: "4px 6px",
                                                         }}
                                                     >
-                                                        {orig
-                                                            ? (orig.content ?? "📎 Вложение")
-                                                            : `Сообщение #${m.replyToMessageId}`}
+                                                        <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 2 }}>
+                                                            {replyOrig
+                                                                ? (replyOrig.senderId === myId ? "Вы" : (profiles[replyOrig.senderId]?.username ?? `user_${replyOrig.senderId}`))
+                                                                : `Сообщение #${replyId}`}
+                                                        </div>
+                                                        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                            {replyOrig
+                                                                ? (replyOrig.content?.trim() || (replyOrig.attachmentUrl ? "📎 Вложение" : "…"))
+                                                                : "Загрузите старые сообщения, чтобы увидеть оригинал"}
+                                                        </div>
                                                     </div>
-                                                );
-                                            })()}
-                                            {isGroup && !mine && (
-                                                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 2, opacity: 0.75 }}>
-                                                    {senderName}
+                                                )}
+                                                {isGroup && !mine && (
+                                                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 2, opacity: 0.75 }}>
+                                                        {senderName}
+                                                    </div>
+                                                )}
+                                                {m.attachmentUrl && (
+                                                    <img src={resolveMediaUrl(m.attachmentUrl)}
+                                                         onClick={() => setLightbox(resolveMediaUrl(m.attachmentUrl)!)}
+                                                         style={{ maxWidth: 180, maxHeight: 180, borderRadius: 6, cursor: "pointer", display: "block" }} />
+                                                )}
+                                                {m.content && (
+                                                    <CollapsibleText
+                                                        text={m.content}
+                                                        maxLines={MAX_LINES}
+                                                        expanded={isExpanded}
+                                                        onToggle={() => setExpandedMsgs(prev => {
+                                                            const next = new Set(prev);
+                                                            if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+                                                            return next;
+                                                        })}
+                                                        textColor={mine ? "#fff" : "#263238"}
+                                                    />
+                                                )}
+                                                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 3, marginTop: 2, opacity: 0.65, fontSize: 10, userSelect: "none" }}>
+                                                    <span>{formatTime(m.createdAt)}</span>
+                                                    {mine && (
+                                                        <span title={m.isRead ? "Прочитано" : "Доставлено"} style={{ letterSpacing: "-2px" }}>
+                                                            {m.isRead ? "✓✓" : "✓"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {hasReactions && (
+                                                <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+                                                    {Object.entries(reactions).filter(([, u]) => u.length > 0).map(([emoji, users]) => (
+                                                        <button key={emoji} onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                                style={{
+                                                                    background: myId && users.includes(myId) ? "#e3f2fd" : "#f5f5f5",
+                                                                    border: myId && users.includes(myId) ? "1px solid #90caf9" : "1px solid #e0e0e0",
+                                                                    borderRadius: 12, padding: "2px 8px", cursor: "pointer",
+                                                                    fontSize: 13, display: "flex", alignItems: "center", gap: 4,
+                                                                }}>
+                                                            {emoji} {users.length}
+                                                        </button>
+                                                    ))}
                                                 </div>
                                             )}
-                                            {m.attachmentUrl && (
-                                                <img src={resolveMediaUrl(m.attachmentUrl)}
-                                                     onClick={() => setLightbox(resolveMediaUrl(m.attachmentUrl)!)}
-                                                     style={{ maxWidth: 180, maxHeight: 180, borderRadius: 6, cursor: "pointer", display: "block" }} />
-                                            )}
-                                            {m.content && (
-                                                <CollapsibleText
-                                                    text={m.content}
-                                                    maxLines={MAX_LINES}
-                                                    expanded={isExpanded}
-                                                    onToggle={() => setExpandedMsgs(prev => {
-                                                        const next = new Set(prev);
-                                                        if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
-                                                        return next;
-                                                    })}
-                                                    textColor={mine ? "#fff" : "#263238"}
-                                                />
-                                            )}
-                                            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 3, marginTop: 2, opacity: 0.65, fontSize: 10, userSelect: "none" }}>
-                                                <span>{formatTime(m.createdAt)}</span>
-                                                {mine && (
-                                                    <span title={m.isRead ? "Прочитано" : "Доставлено"} style={{ letterSpacing: "-2px" }}>
-                                                        {m.isRead ? "✓✓" : "✓"}
-                                                    </span>
-                                                )}
-                                            </div>
                                         </div>
+                                    );
+                                })}
 
-                                        {hasReactions && (
-                                            <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
-                                                {Object.entries(reactions).filter(([, u]) => u.length > 0).map(([emoji, users]) => (
-                                                    <button key={emoji} onClick={() => handleReaction(m.chatId, m.id, emoji)}
-                                                            style={{
-                                                                background: myId && users.includes(myId) ? "#e3f2fd" : "#f5f5f5",
-                                                                border: myId && users.includes(myId) ? "1px solid #90caf9" : "1px solid #e0e0e0",
-                                                                borderRadius: 12, padding: "2px 8px", cursor: "pointer",
-                                                                fontSize: 13, display: "flex", alignItems: "center", gap: 4,
-                                                            }}>
-                                                        {emoji} {users.length}
-                                                    </button>
-                                                ))}
-                                            </div>
+                                {typingList.length > 0 && (
+                                    <div style={{ alignSelf: "flex-start", fontSize: 12, color: "#607d8b", fontStyle: "italic", padding: "2px 4px" }}>
+                                        {typingList.map(id => profiles[id]?.username ?? `user_${id}`).join(", ")}
+                                        {" "}{typingList.length === 1 ? "печатает" : "печатают"}…
+                                    </div>
+                                )}
+                            </div>
+
+                            <div style={{ borderTop: "1px solid #eee", padding: 8, display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                                {attach && (
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#37474f" }}>
+                                        <span>📎 {attach.name}</span>
+                                        {uploading && <span>{uploadPercent ?? 0}%…</span>}
+                                        {!uploading && attachedUrl && <span style={{ color: "#43a047" }}>✓</span>}
+                                        {!uploading && (
+                                            <button type="button" onClick={removeAttach}
+                                                    style={{ background: "none", border: "none", color: "#b00020", cursor: "pointer", padding: 0 }}>✕</button>
                                         )}
+                                        <div style={{ flex: 1, height: 4, background: "#eceff1", borderRadius: 2, overflow: "hidden" }}>
+                                            <div style={{ width: `${uploadPercent ?? 0}%`, height: "100%", background: attachedUrl ? "#43a047" : "#1976d2", transition: "width .2s ease" }} />
+                                        </div>
                                     </div>
-                                );
-                            })}
-
-                            {typingList.length > 0 && (
-                                <div style={{ alignSelf: "flex-start", fontSize: 12, color: "#607d8b", fontStyle: "italic", padding: "2px 4px" }}>
-                                    {typingList.map(id => profiles[id]?.username ?? `user_${id}`).join(", ")}
-                                    {" "}{typingList.length === 1 ? "печатает" : "печатают"}…
-                                </div>
-                            )}
-                        </div>
-
-                        <div style={{ borderTop: "1px solid #eee", padding: 8, display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
-                            {attach && (
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#37474f" }}>
-                                    <span>📎 {attach.name}</span>
-                                    {uploading && <span>{uploadPercent ?? 0}%…</span>}
-                                    {!uploading && attachedUrl && <span style={{ color: "#43a047" }}>✓</span>}
-                                    {!uploading && (
-                                        <button type="button" onClick={removeAttach}
-                                                style={{ background: "none", border: "none", color: "#b00020", cursor: "pointer", padding: 0 }}>✕</button>
-                                    )}
-                                    <div style={{ flex: 1, height: 4, background: "#eceff1", borderRadius: 2, overflow: "hidden" }}>
-                                        <div style={{ width: `${uploadPercent ?? 0}%`, height: "100%", background: attachedUrl ? "#43a047" : "#1976d2", transition: "width .2s ease" }} />
+                                )}
+                                {replyTo && (
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: "#f5f5f5", borderRadius: 6, fontSize: 12 }}>
+                                        <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#37474f" }}>
+                                            ↩ <b>{replyTo.senderId === myId ? "Вы" : (profiles[replyTo.senderId]?.username ?? `user_${replyTo.senderId}`)}</b>: {replyTo.content ?? "📎 Вложение"}
+                                        </div>
+                                        <button onClick={() => setReplyTo(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b00020", padding: 0 }}>
+                                            ✕
+                                        </button>
                                     </div>
-                                </div>
-                            )}
-                            {replyTo && (
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: "#f5f5f5", borderRadius: 6, fontSize: 12 }}>
-                                    <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#37474f" }}>
-                                        ↩ {replyTo.content ?? "📎 Вложение"}
-                                    </div>
-                                    <button onClick={() => setReplyTo(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b00020", padding: 0 }}>
-                                        ✕
+                                )}
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                    <input type="file" hidden accept="image/*" ref={fileRef}
+                                           onChange={e => { const f = e.target.files?.[0]; if (f) attachFile(f); }} />
+                                    <button onClick={() => fileRef.current?.click()} title="Прикрепить" disabled={sending || uploading}>📎</button>
+                                    <input ref={inputRef} style={{ flex: 1 }} value={text}
+                                           onChange={e => handleTextChange(e.target.value)}
+                                           onKeyDown={e => e.key === "Enter" && canSend && handleSend()}
+                                           placeholder="Сообщение…" disabled={sending} />
+                                    <button onClick={handleSend} disabled={!canSend}>
+                                        {sending ? "…" : "Send"}
                                     </button>
                                 </div>
-                            )}
-                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                <input type="file" hidden accept="image/*" ref={fileRef}
-                                       onChange={e => { const f = e.target.files?.[0]; if (f) attachFile(f); }} />
-                                <button onClick={() => fileRef.current?.click()} title="Прикрепить" disabled={sending || uploading}>📎</button>
-                                <input ref={inputRef} style={{ flex: 1 }} value={text}
-                                       onChange={e => handleTextChange(e.target.value)}
-                                       onKeyDown={e => e.key === "Enter" && canSend && handleSend()}
-                                       placeholder="Сообщение…" disabled={sending} />
-                                <button onClick={handleSend} disabled={!canSend}>
-                                    {sending ? "…" : "Send"}
-                                </button>
                             </div>
-                        </div>
-                    </>
-                )}
-            </section>
+                        </>
+                    )}
+                </section>
+            )}
 
             {infoOpen && selected && (
                 <div onClick={() => setInfoOpen(false)}
                      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
-                    <div onClick={e => e.stopPropagation()} style={{ background: "#fff", padding: 20, borderRadius: 12, minWidth: 360, maxWidth: 480 }}>
+                    <div onClick={e => e.stopPropagation()} style={{ background: "#fff", padding: 20, borderRadius: 12, minWidth: 320, maxWidth: "90vw" }}>
                         {selected.type === CHAT_TYPE.PRIVATE ? (
                             <PrivateInfo chat={selected} profiles={profiles} onOpenProfile={id => nav(`/profile/${id}`)} onZoom={setLightbox} />
                         ) : (
@@ -760,7 +832,7 @@ function NewGroupModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
     return (
         <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 30 }}>
-            <div onClick={e => e.stopPropagation()} style={{ background: "#fff", padding: 20, borderRadius: 12, minWidth: 360 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: "#fff", padding: 20, borderRadius: 12, minWidth: 320, maxWidth: "90vw" }}>
                 <h3>Новый групповой чат</h3>
                 <input placeholder="Название" value={name} onChange={e => setName(e.target.value)} />
                 <div style={{ maxHeight: 240, overflow: "auto", marginTop: 8 }}>

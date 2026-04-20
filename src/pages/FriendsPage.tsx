@@ -5,7 +5,7 @@ import {
   rejectRequest, removeFriend, sendFriendRequest,
 } from "@/features/friends/api";
 import type { FriendshipDto } from "@/entities/friendship/types";
-import { getUserProfile, searchUserByUsername, type UserProfileDto } from "@/features/user/api";
+import { getUserProfile, searchUserByUsername, searchUsersByPrefix, type UserProfileDto } from "@/features/user/api";
 import { getUserIdFromToken } from "@/shared/lib/jwt";
 import { createPrivateChat } from "@/features/chat/api";
 import { Avatar } from "@/components/Avatar";
