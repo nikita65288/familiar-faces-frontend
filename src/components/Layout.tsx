@@ -4,9 +4,9 @@ import { clearAuthToken } from "@/shared/lib/authStorage";
 import { getTheme, toggleTheme, type Theme } from "@/shared/lib/theme";
 
 const tabs = [
-    { path: "/chats", label: "Chats" },
-    { path: "/friends", label: "Friends" },
-    { path: "/profile", label: "Profile" },
+    { path: "/chats", label: "Чатики" },
+    { path: "/friends", label: "Друзья Никиты" },
+    { path: "/profile", label: "Я" },
 ];
 
 export default function Layout() {
@@ -56,7 +56,7 @@ export default function Layout() {
                     background: "var(--bg-card, var(--bg))",
                     color: "var(--text-h)", cursor: "pointer",
                 }}>
-                    Logout
+                    Выход
                 </button>
             </header>
             <main style={{ flex: 1, padding: 16, minHeight: 0, overflow: "hidden", background: "var(--bg)" }}>

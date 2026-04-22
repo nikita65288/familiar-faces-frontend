@@ -129,7 +129,7 @@ export default function FriendsPage() {
         {error && <div style={{ color: "crimson" }}>{error}</div>}
 
         <section>
-          <h3>Добавить в друзья</h3>
+          <h3>Подружиться</h3>
           <div style={{ display: "flex", gap: 8, position: "relative" }}>
             <div style={{ position: "relative", flex: 1 }}>
               <input
@@ -169,7 +169,7 @@ export default function FriendsPage() {
                   <Avatar url={searchResult.avatarUrl} name={searchResult.username ?? ""} />
                   <span style={{ fontWeight: 500 }}>{searchResult.username}</span>
                 </div>
-                <button onClick={handleAddFound}>Добавить в друзья</button>
+                <button onClick={handleAddFound}>Подружиться</button>
               </div>
           )}
         </section>
@@ -200,7 +200,7 @@ export default function FriendsPage() {
         </section>
 
         <section>
-          <h3>Друзья ({friends.length})</h3>
+          <h3>Друзья Никиты ({friends.length})</h3>
           <div style={{ maxHeight: 400, overflowY: "auto" }}>
             {friends.map(fr => {
               const uid = otherIdOf(fr);

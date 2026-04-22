@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
     CHAT_TYPE, type ChatDto, addParticipantToChat, createGroupChat, getChats, getMessages,
@@ -90,6 +90,7 @@ export default function ChatPage() {
     const justPrependedRef = useRef(false);
     const didAutoOpenRef = useRef(false);
     const [hoveredMsgId, setHoveredMsgId] = useState<number | null>(null);
+    const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => { selectedIdRef.current = selected?.id ?? null; }, [selected?.id]);
     useEffect(() => { saveSeenAt(seenAt); }, [seenAt]);
@@ -133,7 +134,12 @@ export default function ChatPage() {
 
     async function refreshChats() {
         const list = await getChats();
-        setChats(list);
+        const sorted = [...list].sort((a, b) => {
+            const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            return bTime - aTime;
+        });
+        setChats(sorted);
         ensureUserProfiles(list.flatMap(c => c.participantIds ?? []));
     }
 
@@ -230,6 +236,12 @@ export default function ChatPage() {
         if (selected) setTimeout(() => inputRef.current?.focus(), 50);
     }, [selected?.id]);
 
+    useEffect(() => {
+        return () => {
+            if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        };
+    }, []);
+
     async function openChat(c: ChatDto) {
         setSelected(c);
         setPage(0);
@@ -241,7 +253,16 @@ export default function ChatPage() {
 
     async function openSelfChat() {
         const chat = await getOrCreateSelfChat();
-        setChats(prev => prev.find(c => c.id === chat.id) ? prev : [chat, ...prev]);
+        setChats(prev => {
+            const exists = prev.find(c => c.id === chat.id);
+            const newList = exists ? prev : [chat, ...prev];
+            // сортируем по убыванию даты последнего сообщения
+            return newList.sort((a, b) => {
+                const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                return bTime - aTime;
+            });
+        });
         openChat(chat);
     }
 
@@ -400,7 +421,7 @@ export default function ChatPage() {
                     borderRight: isMobile ? "none" : "1px solid #eee",
                     overflow: "auto", minHeight: 0,
                 }}>
-                    <button style={{ margin: 8 }} onClick={() => setShowNewGroup(true)}>+ New group</button>
+                    <button style={{ margin: 8 }} onClick={() => setShowNewGroup(true)}>Создать конфу</button>
                     <button style={{ margin: "0 8px 8px", display: "block", width: "calc(100% - 16px)", textAlign: "left" }}
                             onClick={openSelfChat}>
                         ⭐ Избранное
@@ -457,7 +478,7 @@ export default function ChatPage() {
                                     if (file) attachFile(file);
                                 }}
                                 style={{
-                                    flex: 1, minHeight: 0, overflowY: "auto", padding: 12,
+                                    flex: 1, minHeight: 0, overflowY: "auto", overflowX: "visible", padding: 12,
                                     display: "flex", flexDirection: "column", gap: 6,
                                     outline: isDragging ? "2px dashed #1976d2" : "none",
                                     background: isDragging ? "#e3f2fd" : undefined,
@@ -472,146 +493,357 @@ export default function ChatPage() {
                                     </div>
                                 )}
 
-                                {messages.map(m => {
+                                {messages.map((m, index) => {
                                     const mine = m.senderId === myId;
                                     const reactions = m.reactions ?? {};
                                     const hasReactions = Object.values(reactions).some(u => u.length > 0);
                                     const isExpanded = expandedMsgs.has(m.id);
                                     const senderName = profiles[m.senderId]?.username ?? `user_${m.senderId}`;
 
-                                    // --- REPLY lookup с fallback в кэш
                                     const replyId = m.replyToMessageId;
                                     const replyOrig: MessageDto | undefined = replyId
                                         ? (messages.find(x => x.id === replyId) ?? msgCacheRef.current[replyId])
                                         : undefined;
 
+                                    // --- Логика разделителя дат ---
+                                    const currentDate = new Date(m.createdAt);
+                                    const prevMsg = messages[index - 1];
+                                    let showDivider = false;
+                                    let label = "";
+
+                                    if (!prevMsg) {
+                                        showDivider = true;
+                                    } else {
+                                        const prevDate = new Date(prevMsg.createdAt);
+                                        if (
+                                            currentDate.getDate() !== prevDate.getDate() ||
+                                            currentDate.getMonth() !== prevDate.getMonth() ||
+                                            currentDate.getFullYear() !== prevDate.getFullYear()
+                                        ) {
+                                            showDivider = true;
+                                        }
+                                    }
+
+                                    if (showDivider) {
+                                        const today = new Date();
+                                        const yesterday = new Date(today);
+                                        yesterday.setDate(yesterday.getDate() - 1);
+                                        const isToday = currentDate.toDateString() === today.toDateString();
+                                        const isYesterday = currentDate.toDateString() === yesterday.toDateString();
+
+                                        if (isToday) label = "Сегодня";
+                                        else if (isYesterday) label = "Вчера";
+                                        else {
+                                            label = currentDate.toLocaleDateString("ru-RU", {
+                                                day: "numeric",
+                                                month: "long",
+                                                year: "numeric",
+                                            });
+                                        }
+                                    }
+
                                     return (
-                                        <div
-                                            key={m.id}
-                                            data-msg-id={m.id}
-                                            style={{
-                                                alignSelf: mine ? "flex-end" : "flex-start",
-                                                maxWidth: isMobile ? "85%" : "60%",
-                                                display: "flex", flexDirection: "column", position: "relative",
-                                                // резерв под меню реакций, чтобы курсор не терял hover
-                                                paddingTop: 28,
-                                                marginTop: -28,
-                                            }}
-                                            onMouseEnter={e => handleMsgHover(e, m.id)}
-                                            onMouseLeave={() => setHoveredMsgId(null)}
-                                        >
-                                            {/* Reaction picker — ВПЛОТНУЮ к пузырю, без зазора */}
-                                            {hoveredMsgId === m.id && (
-                                                <div style={{
-                                                    position: "absolute",
-                                                    [mine ? "right" : "left"]: 0,
-                                                    ...(reactionPopupBelow
-                                                        ? { top: "100%", marginTop: 0 }
-                                                        : { bottom: "calc(100% - 28px)", marginBottom: 0 }),
-                                                    zIndex: 10,
-                                                    // Хитбокс-подушка, чтобы мышь не теряла hover между пузырём и меню
-                                                    padding: reactionPopupBelow ? "4px 0 0 0" : "0 0 4px 0",
-                                                }}>
-                                                    <div style={{
-                                                        display: "inline-flex", gap: 2,
-                                                        background: "#fff", border: "1px solid #e0e0e0",
-                                                        borderRadius: 20, padding: "3px 8px",
-                                                        boxShadow: "0 2px 8px rgba(0,0,0,.18)",
-                                                        whiteSpace: "nowrap",
-                                                    }}>
-                                                        {REACTIONS.map(emoji => (
-                                                            <button key={emoji}
-                                                                    onClick={() => handleReaction(m.chatId, m.id, emoji)}
-                                                                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 2 }}>
-                                                                {emoji}
-                                                            </button>
-                                                        ))}
-                                                        <button
-                                                            onClick={() => setReplyTo(m)}
-                                                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}
-                                                            title="Ответить"
-                                                        >
-                                                            ↩
-                                                        </button>
-                                                    </div>
+                                        <Fragment key={m.id}>
+                                            {showDivider && (
+                                                <div
+                                                    style={{
+                                                        textAlign: "center",
+                                                        margin: "12px 0 8px",
+                                                        color: "#78909c",
+                                                        fontSize: 12,
+                                                        fontWeight: 500,
+                                                        textTransform: "uppercase",
+                                                    }}
+                                                >
+                                                    {label}
                                                 </div>
                                             )}
 
-                                            {/* Пузырь */}
-                                            <div style={{ background: mine ? "#1976d2" : "#eceff1", color: mine ? "#fff" : "#263238", padding: 8, borderRadius: 8 }}>
-                                                {replyId && (
-                                                    <div
-                                                        onClick={() => scrollToMessage(replyId)}
+                                            <div
+                                                data-msg-id={m.id}
+                                                style={{
+                                                    alignSelf: mine ? "flex-end" : "flex-start",
+                                                    maxWidth: isMobile ? "85%" : "60%",
+                                                    display: "flex",
+                                                    flexDirection: "column",
+                                                    position: "relative",
+                                                    paddingTop: 28,
+                                                    marginTop: -28,
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (hoverTimerRef.current) {
+                                                        clearTimeout(hoverTimerRef.current);
+                                                        hoverTimerRef.current = null;
+                                                    }
+                                                    handleMsgHover(e, m.id);
+                                                }}
+                                                onMouseLeave={() => {
+                                                    hoverTimerRef.current = setTimeout(() => {
+                                                        setHoveredMsgId(null);
+                                                    }, 100); // задержка 100 мс
+                                                }}
+                                            >
+                                                {hoveredMsgId === m.id && (
+                                                    <button
+                                                        onClick={() => setReplyTo(m)}
+                                                        onMouseEnter={() => {
+                                                            if (hoverTimerRef.current) {
+                                                                clearTimeout(hoverTimerRef.current);
+                                                                hoverTimerRef.current = null;
+                                                            }
+                                                            setHoveredMsgId(m.id);
+                                                        }}
+                                                        onMouseLeave={() => {
+                                                            hoverTimerRef.current = setTimeout(() => {
+                                                                setHoveredMsgId(null);
+                                                            }, 100);
+                                                        }}
                                                         style={{
-                                                            borderLeft: `3px solid ${mine ? "rgba(255,255,255,0.6)" : "#1976d2"}`,
-                                                            paddingLeft: 6, marginBottom: 6, opacity: 0.85,
-                                                            cursor: "pointer", fontSize: 12,
-                                                            maxHeight: 40, overflow: "hidden",
-                                                            background: mine ? "rgba(255,255,255,0.12)" : "rgba(25,118,210,0.08)",
-                                                            borderRadius: 4, padding: "4px 6px",
+                                                            position: "absolute",
+                                                            // Для своих сообщений: кнопка слева от пузыря (смещаем влево на 100% ширины кнопки + отступ)
+                                                            // Для чужих сообщений: кнопка справа от пузыря (смещаем вправо на 100% ширины родителя)
+                                                            ...(mine
+                                                                ? {
+                                                                    right: "100%",        // правый край кнопки прижат к левому краю родителя
+                                                                    marginRight: 2,       // отступ между кнопкой и пузырём
+                                                                }
+                                                                : {
+                                                                    left: "100%",         // левый край кнопки прижат к правому краю родителя
+                                                                    marginLeft: 2,        // отступ между кнопкой и пузырём
+                                                                }),
+                                                            top: "50%",
+                                                            transform: "translateY(-50%)",
+                                                            background: mine ? "#1565c0" : "#e0e0e0",
+                                                            border: "none",
+                                                            borderRadius: "50%",
+                                                            width: 32,
+                                                            height: 32,
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            justifyContent: "center",
+                                                            cursor: "pointer",
+                                                            color: mine ? "#fff" : "#333",
+                                                            fontSize: 18,
+                                                            boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+                                                            zIndex: 5,
+                                                        }}
+                                                        title="Ответить"
+                                                    >
+                                                        ↩
+                                                    </button>
+                                                )}
+
+                                                {/* Reaction picker */}
+                                                {hoveredMsgId === m.id && (
+                                                    <div
+                                                        style={{
+                                                            position: "absolute",
+                                                            [mine ? "right" : "left"]: 0,
+                                                            ...(reactionPopupBelow
+                                                                ? { top: "100%", marginTop: 0 }
+                                                                : { bottom: "calc(100% - 28px)", marginBottom: 0 }),
+                                                            zIndex: 10,
+                                                            padding: reactionPopupBelow ? "4px 0 0 0" : "0 0 4px 0",
                                                         }}
                                                     >
-                                                        <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 2 }}>
-                                                            {replyOrig
-                                                                ? (replyOrig.senderId === myId ? "Вы" : (profiles[replyOrig.senderId]?.username ?? `user_${replyOrig.senderId}`))
-                                                                : `Сообщение #${replyId}`}
-                                                        </div>
-                                                        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                            {replyOrig
-                                                                ? (replyOrig.content?.trim() || (replyOrig.attachmentUrl ? "📎 Вложение" : "…"))
-                                                                : "Загрузите старые сообщения, чтобы увидеть оригинал"}
+                                                        <div
+                                                            style={{
+                                                                display: "inline-flex",
+                                                                gap: 2,
+                                                                background: "#fff",
+                                                                border: "1px solid #e0e0e0",
+                                                                borderRadius: 20,
+                                                                padding: "3px 8px",
+                                                                boxShadow: "0 2px 8px rgba(0,0,0,.18)",
+                                                                whiteSpace: "nowrap",
+                                                            }}
+                                                        >
+                                                            {REACTIONS.map(emoji => (
+                                                                <button
+                                                                    key={emoji}
+                                                                    onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                                    style={{
+                                                                        background: "none",
+                                                                        border: "none",
+                                                                        cursor: "pointer",
+                                                                        fontSize: 18,
+                                                                        lineHeight: 1,
+                                                                        padding: 2,
+                                                                    }}
+                                                                >
+                                                                    {emoji}
+                                                                </button>
+                                                            ))}
                                                         </div>
                                                     </div>
                                                 )}
-                                                {isGroup && !mine && (
-                                                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 2, opacity: 0.75 }}>
-                                                        {senderName}
-                                                    </div>
-                                                )}
-                                                {m.attachmentUrl && (
-                                                    <img src={resolveMediaUrl(m.attachmentUrl)}
-                                                         onClick={() => setLightbox(resolveMediaUrl(m.attachmentUrl)!)}
-                                                         style={{ maxWidth: 180, maxHeight: 180, borderRadius: 6, cursor: "pointer", display: "block" }} />
-                                                )}
-                                                {m.content && (
-                                                    <CollapsibleText
-                                                        text={m.content}
-                                                        maxLines={MAX_LINES}
-                                                        expanded={isExpanded}
-                                                        onToggle={() => setExpandedMsgs(prev => {
-                                                            const next = new Set(prev);
-                                                            if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
-                                                            return next;
-                                                        })}
-                                                        textColor={mine ? "#fff" : "#263238"}
-                                                    />
-                                                )}
-                                                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 3, marginTop: 2, opacity: 0.65, fontSize: 10, userSelect: "none" }}>
-                                                    <span>{formatTime(m.createdAt)}</span>
-                                                    {mine && (
-                                                        <span title={m.isRead ? "Прочитано" : "Доставлено"} style={{ letterSpacing: "-2px" }}>
-                                                            {m.isRead ? "✓✓" : "✓"}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
 
-                                            {hasReactions && (
-                                                <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
-                                                    {Object.entries(reactions).filter(([, u]) => u.length > 0).map(([emoji, users]) => (
-                                                        <button key={emoji} onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                {/* Пузырь сообщения */}
+                                                <div
+                                                    style={{
+                                                        background: mine ? "#1976d2" : "#eceff1",
+                                                        color: mine ? "#fff" : "#263238",
+                                                        padding: 8,
+                                                        borderRadius: 8,
+                                                    }}
+                                                >
+                                                    {/* Блок ответа */}
+                                                    {replyId && (
+                                                        <div
+                                                            onClick={() => scrollToMessage(replyId)}
+                                                            style={{
+                                                                borderLeft: `3px solid ${mine ? "rgba(255,255,255,0.6)" : "#1976d2"}`,
+                                                                paddingLeft: 6,
+                                                                marginBottom: 6,
+                                                                opacity: 0.85,
+                                                                cursor: "pointer",
+                                                                fontSize: 12,
+                                                                maxHeight: 40,
+                                                                overflow: "hidden",
+                                                                background: mine
+                                                                    ? "rgba(255,255,255,0.12)"
+                                                                    : "rgba(25,118,210,0.08)",
+                                                                borderRadius: 4,
+                                                                padding: "4px 6px",
+                                                            }}
+                                                        >
+                                                            <div
                                                                 style={{
-                                                                    background: myId && users.includes(myId) ? "#e3f2fd" : "#f5f5f5",
-                                                                    border: myId && users.includes(myId) ? "1px solid #90caf9" : "1px solid #e0e0e0",
-                                                                    borderRadius: 12, padding: "2px 8px", cursor: "pointer",
-                                                                    fontSize: 13, display: "flex", alignItems: "center", gap: 4,
-                                                                }}>
-                                                            {emoji} {users.length}
-                                                        </button>
-                                                    ))}
+                                                                    display: "flex",
+                                                                    alignItems: "baseline",
+                                                                    gap: 4,
+                                                                    fontWeight: 600,
+                                                                    fontSize: 11,
+                                                                    marginBottom: 0,
+                                                                    color: mine ? "rgba(255,255,255,0.9)" : "#37474f",
+                                                                }}
+                                                            >
+                                                                <span style={{ flexShrink: 0 }}>
+                                                                  {replyOrig
+                                                                      ? replyOrig.senderId === myId
+                                                                          ? "Вы"
+                                                                          : profiles[replyOrig.senderId]?.username ?? `user_${replyOrig.senderId}`
+                                                                      : `Сообщение #${replyId}`}
+                                                                </span>
+                                                                <span
+                                                                    style={{
+                                                                        whiteSpace: "nowrap",
+                                                                        overflow: "hidden",
+                                                                        textOverflow: "ellipsis",
+                                                                        opacity: 0.8,
+                                                                        flex: 1,
+                                                                    }}
+                                                                >
+                                                                    {replyOrig 
+                                                                        ? replyOrig.content?.trim() || 
+                                                                        (replyOrig.attachmentUrl ? "📎 Вложение" : "…") 
+                                                                        : "Загрузите старые сообщения…"}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {isGroup && !mine && (
+                                                        <div
+                                                            style={{
+                                                                fontSize: 11,
+                                                                fontWeight: 700,
+                                                                marginBottom: 2,
+                                                                opacity: 0.75,
+                                                                textAlign: "left",
+                                                            }}
+                                                        >
+                                                            {senderName}
+                                                        </div>
+                                                    )}
+
+                                                    {m.attachmentUrl && (
+                                                        <img
+                                                            src={resolveMediaUrl(m.attachmentUrl)}
+                                                            onClick={() => setLightbox(resolveMediaUrl(m.attachmentUrl)!)}
+                                                            style={{
+                                                                maxWidth: 180,
+                                                                maxHeight: 180,
+                                                                borderRadius: 6,
+                                                                cursor: "pointer",
+                                                                display: "block",
+                                                            }}
+                                                        />
+                                                    )}
+
+                                                    {m.content && (
+                                                        <CollapsibleText
+                                                            text={m.content}
+                                                            maxLines={MAX_LINES}
+                                                            expanded={isExpanded}
+                                                            onToggle={() =>
+                                                                setExpandedMsgs(prev => {
+                                                                    const next = new Set(prev);
+                                                                    if (next.has(m.id)) next.delete(m.id);
+                                                                    else next.add(m.id);
+                                                                    return next;
+                                                                })
+                                                            }
+                                                            textColor={mine ? "#fff" : "#263238"}
+                                                        />
+                                                    )}
+
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            justifyContent: "flex-end",
+                                                            alignItems: "center",
+                                                            gap: 3,
+                                                            marginTop: 2,
+                                                            opacity: 0.7,
+                                                            fontSize: 10,
+                                                            userSelect: "none",
+                                                            whiteSpace: "nowrap",
+                                                        }}
+                                                    >
+                                                        <span>{formatTime(m.createdAt)}</span>
+                                                        {mine && (
+                                                            <span
+                                                                title={m.isRead ? "Прочитано" : "Доставлено"}
+                                                                style={{ letterSpacing: "-2px" }}
+                                                            >
+                                                                {m.isRead ? "✓✓" : "✓"}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            )}
-                                        </div>
+
+                                                {hasReactions && (
+                                                    <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+                                                        {Object.entries(reactions)
+                                                            .filter(([, u]) => u.length > 0)
+                                                            .map(([emoji, users]) => (
+                                                                <button
+                                                                    key={emoji}
+                                                                    onClick={() => handleReaction(m.chatId, m.id, emoji)}
+                                                                    style={{
+                                                                        background:
+                                                                            myId && users.includes(myId) ? "#e3f2fd" : "#f5f5f5",
+                                                                        border:
+                                                                            myId && users.includes(myId)
+                                                                                ? "1px solid #90caf9"
+                                                                                : "1px solid #e0e0e0",
+                                                                        borderRadius: 12,
+                                                                        padding: "2px 8px",
+                                                                        cursor: "pointer",
+                                                                        fontSize: 13,
+                                                                        display: "flex",
+                                                                        alignItems: "center",
+                                                                        gap: 4,
+                                                                    }}
+                                                                >
+                                                                    {emoji} {users.length}
+                                                                </button>
+                                                            ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </Fragment>
                                     );
                                 })}
 
