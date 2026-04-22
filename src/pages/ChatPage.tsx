@@ -98,7 +98,13 @@ export default function ChatPage() {
 
     // Обновляем кэш сообщений при каждом изменении messages
     useEffect(() => {
-        messages.forEach(m => { msgCacheRef.current[m.id] = m; });
+        messages.forEach(m => {
+            // гарантируем, что в кэше isRead всегда boolean
+            msgCacheRef.current[m.id] = {
+                ...m,
+                isRead: !!(m.isRead || (m as any).read)
+            };
+        });
     }, [messages]);
 
     function markChatSeen(chatId: number, at?: string) {
@@ -171,10 +177,15 @@ export default function ChatPage() {
                 subs.push(c.subscribe(`/topic/chats.${chat.id}`, (msg) => {
                     const m: MessageDto = JSON.parse(msg.body);
                     if (m.chatId !== chat.id) return;
-                    msgCacheRef.current[m.id] = m;
-                    if (selectedIdRef.current === m.chatId) {
-                        setMessages(prev => appendUnique(prev, m));
-                        markChatSeen(m.chatId, m.createdAt);
+                    const isSelfChat = chat.type === CHAT_TYPE.PRIVATE && chat.otherParticipantId === undefined;
+                    const normalized = {
+                        ...m,
+                        isRead: isSelfChat ? true : !!(m.isRead || (m as any).read)
+                    };
+                    msgCacheRef.current[normalized.id] = normalized;
+                    if (selectedIdRef.current === normalized.chatId) {
+                        setMessages(prev => appendUnique(prev, normalized));
+                        markChatSeen(normalized.chatId, normalized.createdAt);
                     }
                     refreshChats();
                 }));
@@ -246,8 +257,30 @@ export default function ChatPage() {
         setSelected(c);
         setPage(0);
         const p = await getMessages(c.id, 0, PAGE_SIZE);
-        setMessages(p.content);
+        const normalized = p.content.map(m => {
+            const isSelfChat = c.type === CHAT_TYPE.PRIVATE && c.otherParticipantId === undefined;
+            return {
+                ...m,
+                isRead: isSelfChat ? true : !!(m.isRead || (m as any).read)
+            };
+        });
+        setMessages(normalized);
         setHasMore(p.content.length >= PAGE_SIZE);
+
+        // Ищем первое непрочитанное сообщение от собеседника
+        const lastSeen = seenAt[c.id];
+        const firstUnread = lastSeen
+            ? normalized.find(m => m.senderId !== myId && new Date(m.createdAt) > new Date(lastSeen))
+            : undefined;
+
+        if (firstUnread) {
+            setTimeout(() => scrollToMessage(firstUnread.id), 100);
+        } else {
+            setTimeout(() => {
+                messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight });
+            }, 50);
+        }
+
         markChatSeen(c.id, c.lastMessageAt ?? new Date().toISOString());
     }
 
@@ -276,7 +309,12 @@ export default function ChatPage() {
             const prevScrollHeight = el?.scrollHeight ?? 0;
             const prevScrollTop = el?.scrollTop ?? 0;
             justPrependedRef.current = true;
-            setMessages(prev => prependUnique(prev, p.content));
+            const isSelfChat = selected.type === CHAT_TYPE.PRIVATE && selected.otherParticipantId === undefined;
+            const normalizedOlder = p.content.map(m => ({
+                ...m,
+                isRead: isSelfChat ? true : !!(m.isRead || (m as any).read)
+            }));
+            setMessages(prev => prependUnique(prev, normalizedOlder));
             setPage(nextPage);
             setHasMore(p.content.length >= PAGE_SIZE);
             requestAnimationFrame(() => {
@@ -335,8 +373,13 @@ export default function ChatPage() {
         setSending(true);
         try {
             const sent = await sendMessage(selected.id, text, attachedUrl ?? undefined, replyTo?.id);
-            msgCacheRef.current[sent.id] = sent;
-            setMessages(prev => appendUnique(prev, sent));
+            const isSelfChat = selected.type === CHAT_TYPE.PRIVATE && selected.otherParticipantId === undefined;
+            const normalizedSent = {
+                ...sent,
+                isRead: isSelfChat ? true : !!(sent.isRead || (sent as any).read)
+            };
+            msgCacheRef.current[normalizedSent.id] = normalizedSent;
+            setMessages(prev => appendUnique(prev, normalizedSent));
             setText("");
             setReplyTo(null);
             removeAttach();

@@ -125,7 +125,16 @@ export default function FriendsPage() {
   }
 
   return (
-      <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+      <div style={{
+        maxWidth: 720,
+        margin: "0 auto",
+        display: "flex",
+        flexDirection: "column",
+        gap: 24,
+        height: "100vh",
+        overflowY: "auto",
+        padding: "0 16px"
+      }}>
         {error && <div style={{ color: "crimson" }}>{error}</div>}
 
         <section>
